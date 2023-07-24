@@ -95,19 +95,30 @@ where
     }
 }
 
+const I2C_BASE_ADDRESS: u8 = 0x40;
+
+#[derive(Clone, Copy, Debug)]
+#[repr(u8)]
+pub enum Lp586xI2cAddress {
+    Addr00 = (I2C_BASE_ADDRESS | 0 << 2),
+    Addr01 = (I2C_BASE_ADDRESS | 1 << 2),
+    Addr10 = (I2C_BASE_ADDRESS | 2 << 2),
+    Addr11 = (I2C_BASE_ADDRESS | 3 << 2),
+}
+
 pub struct I2cInterface<I2C> {
     pub(crate) i2c: I2C,
-    pub(crate) address: u8,
+    pub(crate) address: Lp586xI2cAddress,
 }
 
 impl<I2C> I2cInterface<I2C> {
-    pub fn new(i2c: I2C, address: u8) -> Self {
+    pub fn new(i2c: I2C, address: Lp586xI2cAddress) -> Self {
         Self { i2c, address }
     }
 
     fn address_with_register(&self, register: u16) -> u8 {
         // The `address` is the 7bit i2c address (so excluding the R/W bit), not 8 bit (incl R/W)
-        (self.address & !0b11) | ((register & 0x300) >> 8) as u8
+        (self.address as u8 & !0b11) | ((register & 0x300) >> 8) as u8
     }
 }
 
