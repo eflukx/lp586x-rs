@@ -11,6 +11,11 @@ pub mod configuration;
 pub mod interface;
 mod register;
 
+#[cfg(feature = "embedded_graphics")]
+pub mod gfx;
+
+use core::marker::PhantomData;
+
 use configuration::Configuration;
 use interface::RegisterAccess;
 use register::{BitFlags, Register};
@@ -23,6 +28,10 @@ pub enum Error<BusE> {
 
     /// Temporary buffer too small
     BufferOverrun,
+
+    /// Size needs to be the same when stacking displays
+    #[cfg(feature = "embedded_graphics")]
+    SizeMismatch,
 }
 
 /// Output PWM frequency setting
@@ -208,7 +217,7 @@ impl GlobalFaultState {
 }
 
 /// Represents a safe way to address a dot in the matrix.
-pub struct Dot<DV>(u16, core::marker::PhantomData<DV>);
+pub struct Dot<DV>(u16, PhantomData<DV>);
 
 impl<DV: DeviceVariant> Dot<DV> {
     /// Create [`Dot`] at `index`. Panics if given `index` is outside the device
@@ -218,7 +227,7 @@ impl<DV: DeviceVariant> Dot<DV> {
             panic!("Device variant does not support dot {index}");
         }
 
-        Self(index, core::marker::PhantomData::default())
+        Self(index, PhantomData::default())
     }
 
     pub fn index(&self) -> u16 {
@@ -302,8 +311,8 @@ impl seal::Sealed for DataMode16Bit {}
 /// Generic driver for all LP586x variants.
 pub struct Lp586x<DV, I, DM> {
     interface: I,
-    _data_mode: DM,
-    _phantom_data: core::marker::PhantomData<DV>,
+    _data_mode: PhantomData<DM>,
+    _variant: PhantomData<DV>,
 }
 
 #[cfg(feature = "eh1_0")]
@@ -354,11 +363,7 @@ mod for_eh02 {
     }
 }
 
-impl<DV: DeviceVariant, I, DM, BusE> Lp586x<DV, I, DM>
-where
-    I: RegisterAccess<Error = Error<BusE>>,
-    DM: DataModeMarker,
-{
+impl<DV: DeviceVariant, I, DM> Lp586x<DV, I, DM> {
     /// Number of current sinks of the LP586x
     pub const NUM_CURRENT_SINKS: usize = DV::NUM_CURRENT_SINKS as usize;
 
@@ -368,26 +373,53 @@ where
     /// Time to wait after enabling the chip (t_chip_en)
     pub const T_CHIP_EN_US: u32 = 100;
 
-    /// Create a new LP586x driver instance with the given `interface`.
-    ///
-    /// The returned driver has the chip enabled
-    pub fn new(interface: I) -> Result<Lp586x<DV, I, DataModeUnconfigured>, Error<BusE>> {
-        let mut driver = Lp586x {
-            interface,
-            _data_mode: DataModeUnconfigured,
-            _phantom_data: core::marker::PhantomData::default(),
-        };
-        driver.chip_enable(true)?;
-
-        Ok(driver)
-    }
-
     pub fn num_lines(&self) -> u8 {
         DV::NUM_LINES
     }
 
     pub fn num_dots(&self) -> u16 {
         DV::NUM_DOTS
+    }
+}
+
+impl<DV: DeviceVariant, I, DM, BusE> Lp586x<DV, I, DM>
+where
+    I: RegisterAccess<Error = Error<BusE>>,
+    // I: RegisterAccess,
+    DM: DataModeMarker,
+{
+    // type E = Error<RegisterAccess::Error>;
+    // /// Number of current sinks of the LP586x
+    // pub const NUM_CURRENT_SINKS: usize = DV::NUM_CURRENT_SINKS as usize;
+
+    // /// Total number of LEDs supported by this driver
+    // pub const NUM_DOTS: usize = DV::NUM_DOTS as usize;
+
+    // /// Time to wait after enabling the chip (t_chip_en)
+    // pub const T_CHIP_EN_US: u32 = 100;
+
+    /// Create a new LP586x driver instance with the given `interface`.
+    ///
+    /// The returned driver has the chip enabled
+    pub fn new(interface: I) -> Result<Lp586x<DV, I, DataModeUnconfigured>, Error<BusE>> {
+        let mut driver = Lp586x {
+            interface,
+            _data_mode: PhantomData::default(),
+            _variant: PhantomData::default(),
+        };
+
+        driver.reset()?;
+        driver.chip_enable(true)?;
+
+        Ok(driver)
+    }
+
+    pub fn new_8bit(interface: I) -> Result<Lp586x<DV, I, DataMode8Bit>, Error<BusE>> {
+        Self::new(interface)?.into_8bit_data_mode()
+    }
+
+    pub fn new_16bit(interface: I) -> Result<Lp586x<DV, I, DataMode16Bit>, Error<BusE>> {
+        Self::new(interface)?.into_16bit_data_mode()
     }
 
     /// Enable or disable the chip.
@@ -459,16 +491,16 @@ where
     pub fn into_16bit_data_mode(self) -> Result<Lp586x<DV, I, DataMode16Bit>, Error<BusE>> {
         Ok(Lp586x {
             interface: self.interface,
-            _data_mode: DataMode16Bit,
-            _phantom_data: core::marker::PhantomData::default(),
+            _data_mode: PhantomData::default(),
+            _variant: PhantomData::default(),
         })
     }
 
     pub fn into_8bit_data_mode(self) -> Result<Lp586x<DV, I, DataMode8Bit>, Error<BusE>> {
         Ok(Lp586x {
             interface: self.interface,
-            _data_mode: DataMode8Bit,
-            _phantom_data: core::marker::PhantomData::default(),
+            _data_mode: PhantomData::default(),
+            _variant: PhantomData::default(),
         })
     }
 }
