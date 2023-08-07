@@ -349,7 +349,6 @@ mod for_eh1_0 {
 
         #[test]
         fn test_i2c_read_register() {
-            // test writing to register 0x38b
             const REGISTER: u16 = 0x38b;
             const VALUE: u8 = 0xAB;
 
@@ -360,7 +359,7 @@ mod for_eh1_0 {
                 I2cTransaction::transaction_end(0),
             ]);
 
-            let mut i2c_if = I2cInterface::new(i2c, 0);
+            let mut i2c_if = I2cInterface::new(i2c, Lp586xI2cAddress::Addr00);
 
             let value = i2c_if.read_register(REGISTER).unwrap();
             assert_eq!(value, VALUE);
@@ -370,7 +369,6 @@ mod for_eh1_0 {
 
         #[test]
         fn test_i2c_write_register() {
-            // test writing to register 0x38b
             const REGISTER: u16 = 0x38b;
             const VALUE: u8 = 0xAB;
 
@@ -380,7 +378,7 @@ mod for_eh1_0 {
                 I2cTransaction::transaction_end(0),
             ]);
 
-            let mut i2c_if = I2cInterface::new(i2c, 0);
+            let mut i2c_if = I2cInterface::new(i2c, Lp586xI2cAddress::Addr00);
 
             i2c_if.write_register(REGISTER, VALUE).unwrap();
 

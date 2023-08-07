@@ -342,7 +342,7 @@ where
 {
     pub fn new_with_i2c(
         i2c: D,
-        address: u8,
+        address: interface::Lp586xI2cAddress,
     ) -> Result<Lp586x<DV, interface::I2cInterface<D>, DataModeUnconfigured>, Error<IE>> {
         Lp586x::<DV, _, DataModeUnconfigured>::new(interface::I2cInterface::new(i2c, address))
     }
