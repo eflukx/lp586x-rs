@@ -17,14 +17,14 @@ pub mod gfx;
 use core::marker::PhantomData;
 
 use configuration::Configuration;
-use interface::RegisterAccess;
+use interface::{RegisterAccess, SpiInterfaceError};
 use register::{BitFlags, Register};
 
 /// Error enum for the LP586x driver
 #[derive(Debug)]
-pub enum Error<BusE> {
-    /// A bus related error has occured
-    Bus(BusE),
+pub enum Error<IE> {
+    /// An interface related error has occured
+    Interface(IE),
 
     /// Temporary buffer too small
     BufferOverrun,
@@ -183,6 +183,26 @@ impl Group {
     }
 }
 
+/// Configurable group for each dot
+#[derive(Debug, Clone, Copy)]
+pub enum DotGroup {
+    None,
+    Group0,
+    Group1,
+    Group2,
+}
+
+impl DotGroup {
+    fn register_value(&self) -> u8 {
+        match self {
+            DotGroup::None => 0,
+            DotGroup::Group0 => 0b01,
+            DotGroup::Group1 => 0b10,
+            DotGroup::Group2 => 0b11,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct GlobalFaultState {
     led_open_detected: bool,
@@ -316,51 +336,74 @@ pub struct Lp586x<DV, I, DM> {
 }
 
 #[cfg(feature = "eh1_0")]
-impl<DV: DeviceVariant, DM: DataModeMarker, BusE, D> Lp586x<DV, interface::I2cInterface<D>, DM>
+impl<DV: DeviceVariant, DM: DataModeMarker, IE, D> Lp586x<DV, interface::I2cInterface<D>, DM>
 where
-    D: eh1_0::i2c::I2c<Error = BusE>,
+    D: eh1_0::i2c::I2c<Error = IE>,
 {
     pub fn new_with_i2c(
         i2c: D,
         address: u8,
-    ) -> Result<Lp586x<DV, interface::I2cInterface<D>, DataModeUnconfigured>, Error<BusE>> {
+    ) -> Result<Lp586x<DV, interface::I2cInterface<D>, DataModeUnconfigured>, Error<IE>> {
         Lp586x::<DV, _, DataModeUnconfigured>::new(interface::I2cInterface::new(i2c, address))
     }
 }
 
 #[cfg(feature = "eh1_0")]
-impl<DV: DeviceVariant, DM: DataModeMarker, BusE, D>
-    Lp586x<DV, interface::SpiDeviceInterface<D>, DM>
+impl<DV: DeviceVariant, DM: DataModeMarker, IE, D> Lp586x<DV, interface::SpiDeviceInterface<D>, DM>
 where
-    D: eh1_0::spi::SpiDevice<Error = BusE>,
+    D: eh1_0::spi::SpiDevice<Error = IE>,
 {
     pub fn new_with_spi_device(
         spi_device: D,
-    ) -> Result<Lp586x<DV, interface::SpiDeviceInterface<D>, DataModeUnconfigured>, Error<BusE>>
-    {
+    ) -> Result<Lp586x<DV, interface::SpiDeviceInterface<D>, DataModeUnconfigured>, Error<IE>> {
         Lp586x::<DV, _, DataModeUnconfigured>::new(interface::SpiDeviceInterface::new(spi_device))
     }
 }
 
 #[cfg(not(feature = "eh1_0"))]
-mod for_eh02 {
-    use super::*;
-
-    impl<DV: DeviceVariant, DM: DataModeMarker, BusE, SPI, CS>
-        Lp586x<DV, interface::SpiInterface<SPI, CS>, DM>
-    where
-        SPI: embedded_hal::blocking::spi::Transfer<u8, Error = BusE>
-            + embedded_hal::blocking::spi::Write<u8, Error = BusE>,
-        CS: embedded_hal::digital::v2::OutputPin<Error = BusE>,
-    {
-        pub fn new_with_spi_cs(
-            spi: SPI,
-            cs: CS,
-        ) -> Result<Lp586x<DV, interface::SpiInterface<SPI, CS>, DataModeUnconfigured>, Error<BusE>>
-        {
-            Lp586x::<DV, _, DataModeUnconfigured>::new(interface::SpiInterface::new(spi, cs))
-        }
+impl<DV: DeviceVariant, DM: DataModeMarker, SPI, CS, SPIE>
+    Lp586x<DV, interface::SpiInterface<SPI, CS>, DM>
+where
+    SPI: embedded_hal::blocking::spi::Transfer<u8, Error = SPIE>
+        + embedded_hal::blocking::spi::Write<u8, Error = SPIE>,
+    CS: embedded_hal::digital::v2::OutputPin,
+{
+    pub fn new_with_spi_cs(
+        spi: SPI,
+        cs: CS,
+    ) -> Result<
+        Lp586x<DV, interface::SpiInterface<SPI, CS>, DataModeUnconfigured>,
+        Error<SpiInterfaceError<SPIE, CS::Error>>,
+    > {
+        Lp586x::<DV, _, DataModeUnconfigured>::new(interface::SpiInterface::new(spi, cs))
     }
+}
+
+macro_rules! fault_per_dot_fn {
+    ($name:ident, $reg:expr, $doc:literal) => {
+        #[doc=$doc]
+        pub fn $name(&mut self, dots: &mut [bool]) -> Result<(), Error<IE>> {
+            let mut buffer = [0u8; 33];
+
+            self.interface.read_registers($reg, &mut buffer)?;
+
+            dots[..DV::NUM_DOTS as usize]
+                .iter_mut()
+                .enumerate()
+                .map(|(i, dot)| {
+                    (
+                        i / DV::NUM_CURRENT_SINKS as usize,
+                        i % DV::NUM_CURRENT_SINKS as usize,
+                        dot,
+                    )
+                })
+                .for_each(|(line, cs, led_is_open)| {
+                    *led_is_open = buffer[line * 3 + cs / 8] & (1 << (cs % 8)) > 0;
+                });
+
+            Ok(())
+        }
+    };
 }
 
 impl<DV: DeviceVariant, I, DM> Lp586x<DV, I, DM> {
@@ -373,18 +416,20 @@ impl<DV: DeviceVariant, I, DM> Lp586x<DV, I, DM> {
     /// Time to wait after enabling the chip (t_chip_en)
     pub const T_CHIP_EN_US: u32 = 100;
 
-    pub fn num_lines(&self) -> u8 {
+    /// Number of lines (switches) supported by this driver
+    pub const fn num_lines(&self) -> u8 {
         DV::NUM_LINES
     }
 
-    pub fn num_dots(&self) -> u16 {
+    /// Total number of dots supported by this driver
+    pub const fn num_dots(&self) -> u16 {
         DV::NUM_DOTS
     }
 }
 
-impl<DV: DeviceVariant, I, DM, BusE> Lp586x<DV, I, DM>
+impl<DV: DeviceVariant, I, DM, IE> Lp586x<DV, I, DM>
 where
-    I: RegisterAccess<Error = Error<BusE>>,
+    I: RegisterAccess<Error = Error<IE>>,
     // I: RegisterAccess,
     DM: DataModeMarker,
 {
@@ -401,7 +446,7 @@ where
     /// Create a new LP586x driver instance with the given `interface`.
     ///
     /// The returned driver has the chip enabled
-    pub fn new(interface: I) -> Result<Lp586x<DV, I, DataModeUnconfigured>, Error<BusE>> {
+    pub fn new(interface: I) -> Result<Lp586x<DV, I, DataModeUnconfigured>, Error<IE>> {
         let mut driver = Lp586x {
             interface,
             _data_mode: PhantomData::default(),
@@ -414,25 +459,25 @@ where
         Ok(driver)
     }
 
-    pub fn new_8bit(interface: I) -> Result<Lp586x<DV, I, DataMode8Bit>, Error<BusE>> {
+    pub fn new_8bit(interface: I) -> Result<Lp586x<DV, I, DataMode8Bit>, Error<IE>> {
         Self::new(interface)?.into_8bit_data_mode()
     }
 
-    pub fn new_16bit(interface: I) -> Result<Lp586x<DV, I, DataMode16Bit>, Error<BusE>> {
+    pub fn new_16bit(interface: I) -> Result<Lp586x<DV, I, DataMode16Bit>, Error<IE>> {
         Self::new(interface)?.into_16bit_data_mode()
     }
 
     /// Enable or disable the chip.
     ///
     /// After enabling the chip, wait t_chip_en (100µs) for the chip to enter normal mode.
-    pub fn chip_enable(&mut self, enable: bool) -> Result<(), Error<BusE>> {
+    pub fn chip_enable(&mut self, enable: bool) -> Result<(), Error<IE>> {
         self.interface.write_register(
             Register::CHIP_EN,
             if enable { BitFlags::CHIP_EN_CHIP_EN } else { 0 },
         )
     }
 
-    pub fn configure(&mut self, configuration: &Configuration) -> Result<(), Error<BusE>> {
+    pub fn configure(&mut self, configuration: &Configuration) -> Result<(), Error<IE>> {
         self.interface.write_registers(
             Register::DEV_INITIAL,
             &[
@@ -447,12 +492,54 @@ where
     }
 
     /// Resets the chip.
-    pub fn reset(&mut self) -> Result<(), Error<BusE>> {
+    pub fn reset(&mut self) -> Result<(), Error<IE>> {
         self.interface.write_register(Register::RESET, 0xff)
     }
 
+    /// Configures dot groups, starting at dot L0-CS0. At least the first dot group has
+    /// to be specified, and at most `self.num_dots()`.
+    pub fn set_dot_groups(&mut self, dot_groups: &[DotGroup]) -> Result<(), Error<IE>> {
+        let mut buffer = [0u8; 54];
+
+        assert!(dot_groups.len() <= self.num_dots() as usize);
+        assert!(!dot_groups.is_empty());
+
+        dot_groups
+            .iter()
+            .enumerate()
+            .map(|(i, dot_group)| {
+                (
+                    i / Self::NUM_CURRENT_SINKS,
+                    i % Self::NUM_CURRENT_SINKS,
+                    dot_group,
+                )
+            })
+            .for_each(|(line, cs, dot_group)| {
+                buffer[line * 5 + cs / 4] |= dot_group.register_value() << (cs % 4 * 2)
+            });
+
+        let last_group = (dot_groups.len() - 1) / Self::NUM_CURRENT_SINKS * 5
+            + (dot_groups.len() - 1) % Self::NUM_CURRENT_SINKS / 4;
+
+        self.interface
+            .write_registers(Register::DOT_GROUP_SELECT_START, &buffer[..=last_group])?;
+
+        Ok(())
+    }
+
+    /// Set dot current, starting from `start_dot`.
+    pub fn set_dot_current(&mut self, start_dot: u16, current: &[u8]) -> Result<(), Error<IE>> {
+        assert!(current.len() <= self.num_dots() as usize);
+        assert!(!current.is_empty());
+
+        self.interface
+            .write_registers(Register::DOT_CURRENT_START + start_dot, current)?;
+
+        Ok(())
+    }
+
     /// Sets the global brightness across all LEDs.
-    pub fn set_global_brightness(&mut self, brightness: u8) -> Result<(), Error<BusE>> {
+    pub fn set_global_brightness(&mut self, brightness: u8) -> Result<(), Error<IE>> {
         self.interface
             .write_register(Register::GLOBAL_BRIGHTNESS, brightness)?;
 
@@ -462,11 +549,7 @@ where
     /// Sets the brightness across all LEDs in the given [`Group`].
     /// Note that individual LEDS/dots need to be assigned to a `LED_DOT_GROUP`
     /// for this setting to have effect. By default dots ar not assigned to any group.
-    pub fn set_group_brightness(
-        &mut self,
-        group: Group,
-        brightness: u8,
-    ) -> Result<(), Error<BusE>> {
+    pub fn set_group_brightness(&mut self, group: Group, brightness: u8) -> Result<(), Error<IE>> {
         self.interface
             .write_register(group.brightness_reg_addr(), brightness)?;
 
@@ -474,7 +557,7 @@ where
     }
 
     /// Set group current scaling (0..127).
-    pub fn set_group_current(&mut self, group: Group, current: u8) -> Result<(), Error<BusE>> {
+    pub fn set_group_current(&mut self, group: Group, current: u8) -> Result<(), Error<IE>> {
         self.interface
             .write_register(group.current_reg_addr(), current.min(0x7f))?;
 
@@ -483,12 +566,34 @@ where
 
     /// Get global fault state, indicating if any LEDs in the matrix have a
     /// open or short failure.
-    pub fn get_global_fault_state(&mut self) -> Result<GlobalFaultState, Error<BusE>> {
+    pub fn get_global_fault_state(&mut self) -> Result<GlobalFaultState, Error<IE>> {
         let fault_state_value = self.interface.read_register(Register::FAULT_STATE)?;
         Ok(GlobalFaultState::from_reg_value(fault_state_value))
     }
 
-    pub fn into_16bit_data_mode(self) -> Result<Lp586x<DV, I, DataMode16Bit>, Error<BusE>> {
+    fault_per_dot_fn!(
+        get_led_open_states,
+        Register::DOT_LOD_START,
+        "Get LED open states, starting from the first dot."
+    );
+
+    fault_per_dot_fn!(
+        get_led_short_states,
+        Register::DOT_LSD_START,
+        "Get LED short states, starting from the first dot."
+    );
+
+    /// Clear all led open detection (LOD) indication bits
+    pub fn clear_led_open_fault(&mut self) -> Result<(), Error<IE>> {
+        self.interface.write_register(Register::LOD_CLEAR, 0xF)
+    }
+
+    /// Clear all led short detection (LSD) indication bits
+    pub fn clear_led_short_fault(&mut self) -> Result<(), Error<IE>> {
+        self.interface.write_register(Register::LSD_CLEAR, 0xF)
+    }
+
+    pub fn into_16bit_data_mode(self) -> Result<Lp586x<DV, I, DataMode16Bit>, Error<IE>> {
         Ok(Lp586x {
             interface: self.interface,
             _data_mode: PhantomData::default(),
@@ -496,7 +601,7 @@ where
         })
     }
 
-    pub fn into_8bit_data_mode(self) -> Result<Lp586x<DV, I, DataMode8Bit>, Error<BusE>> {
+    pub fn into_8bit_data_mode(self) -> Result<Lp586x<DV, I, DataMode8Bit>, Error<IE>> {
         Ok(Lp586x {
             interface: self.interface,
             _data_mode: PhantomData::default(),
@@ -516,7 +621,10 @@ pub trait PwmAccess<T> {
     fn get_pwm(&mut self, dot: u16) -> Result<T, Self::Error>;
 }
 
-impl<DV: DeviceVariant, I: RegisterAccess> PwmAccess<u8> for Lp586x<DV, I, DataMode8Bit> {
+impl<DV: DeviceVariant, I> PwmAccess<u8> for Lp586x<DV, I, DataMode8Bit>
+where
+    I: RegisterAccess,
+{
     type Error = I::Error;
 
     fn set_pwm(&mut self, start_dot: u16, values: &[u8]) -> Result<(), Self::Error> {
@@ -537,7 +645,10 @@ impl<DV: DeviceVariant, I: RegisterAccess> PwmAccess<u8> for Lp586x<DV, I, DataM
     }
 }
 
-impl<DV: DeviceVariant, I: RegisterAccess> PwmAccess<u16> for Lp586x<DV, I, DataMode16Bit> {
+impl<DV: DeviceVariant, I> PwmAccess<u16> for Lp586x<DV, I, DataMode16Bit>
+where
+    I: RegisterAccess,
+{
     type Error = I::Error;
 
     fn set_pwm(&mut self, start_dot: u16, values: &[u16]) -> Result<(), Self::Error> {
@@ -614,10 +725,72 @@ mod tests {
 
     #[test]
     fn test_create_new() {
-        let interface = MockInterface::new(vec![Access::WriteRegister(0x0a9, 0xff)]);
+        let interface = MockInterface::new(vec![
+            Access::WriteRegister(0x0a9, 0xff),
+            Access::WriteRegister(0x000, 1),
+        ]);
+
+        let ledmatrix = Lp5860::new(interface).unwrap();
+
+        ledmatrix.release().done();
+    }
+
+    #[test]
+    fn test_set_dot_groups() {
+        #[rustfmt::skip]
+        let interface = MockInterface::new(vec![
+            Access::WriteRegister(0x0a9, 0xff),
+            Access::WriteRegister(0x000, 1),
+            Access::WriteRegisters(
+                0x00c,
+                vec![
+                    // L0
+                    0b01111001, 0b10011110, 0b11100111, 0b01111001, 0b1110,
+                    // L1
+                    0b01111001, 0b00111110,
+                ],
+            ),
+            Access::WriteRegisters(
+                0x00c,
+                vec![0b00]
+            ),
+        ]);
 
         let mut ledmatrix = Lp5860::new(interface).unwrap();
-        ledmatrix.reset().unwrap();
+
+        ledmatrix
+            .set_dot_groups(&[
+                // L0
+                DotGroup::Group0,
+                DotGroup::Group1,
+                DotGroup::Group2,
+                DotGroup::Group0,
+                DotGroup::Group1,
+                DotGroup::Group2,
+                DotGroup::Group0,
+                DotGroup::Group1,
+                DotGroup::Group2,
+                DotGroup::Group0,
+                DotGroup::Group1,
+                DotGroup::Group2,
+                DotGroup::Group0,
+                DotGroup::Group1,
+                DotGroup::Group2,
+                DotGroup::Group0,
+                DotGroup::Group1,
+                DotGroup::Group2,
+                // L1
+                DotGroup::Group0,
+                DotGroup::Group1,
+                DotGroup::Group2,
+                DotGroup::Group0,
+                DotGroup::Group1,
+                DotGroup::Group2,
+                DotGroup::Group2,
+            ])
+            .unwrap();
+
+        ledmatrix.set_dot_groups(&[DotGroup::None]).unwrap();
 
         ledmatrix.release().done();
     }
