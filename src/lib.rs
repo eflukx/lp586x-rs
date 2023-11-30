@@ -430,21 +430,10 @@ impl<DV: DeviceVariant, I, DM> Lp586x<DV, I, DM> {
 impl<DV: DeviceVariant, I, DM, IE> Lp586x<DV, I, DM>
 where
     I: RegisterAccess<Error = Error<IE>>,
-    // I: RegisterAccess,
     DM: DataModeMarker,
 {
-    // type E = Error<RegisterAccess::Error>;
-    // /// Number of current sinks of the LP586x
-    // pub const NUM_CURRENT_SINKS: usize = DV::NUM_CURRENT_SINKS as usize;
-
-    // /// Total number of LEDs supported by this driver
-    // pub const NUM_DOTS: usize = DV::NUM_DOTS as usize;
-
-    // /// Time to wait after enabling the chip (t_chip_en)
-    // pub const T_CHIP_EN_US: u32 = 100;
-
     /// Create a new LP586x driver instance with the given `interface`.
-    ///
+    /// 
     /// The returned driver has the chip enabled
     pub fn new(interface: I) -> Result<Lp586x<DV, I, DataModeUnconfigured>, Error<IE>> {
         let mut driver = Lp586x {

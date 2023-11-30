@@ -1,4 +1,7 @@
-use crate::{interface::RegisterAccess, DataMode8Bit, DeviceVariant, Lp586x, PwmAccess};
+use crate::{
+    configuration::Configuration, interface::RegisterAccess, DataMode8Bit, DataModeMarker,
+    DeviceVariant, Lp586x, PwmAccess,
+};
 pub use embedded_graphics as eg;
 use embedded_graphics::{pixelcolor::Gray8, prelude::*};
 use embedded_hal::digital::v2::OutputPin;
@@ -9,6 +12,38 @@ pub struct Lp586xDisplay1x2<U, L, VP> {
     upper: U,
     lower: L,
     vsync_pin: VP,
+}
+
+impl<VP, DV, I, DM, IE> Lp586xDisplay1x2<Lp586x<DV, I, DM>, Lp586x<DV, I, DM>, VP>
+where
+    I: RegisterAccess<Error = crate::Error<IE>>,
+    DV: DeviceVariant,
+    DM: DataModeMarker,
+{
+    pub fn set_global_brightness(&mut self, brightness: u8) -> Result<(), crate::Error<IE>> {
+        self.upper_mut().set_global_brightness(brightness)?;
+        self.lower_mut().set_global_brightness(brightness)
+    }
+
+    pub fn configure(&mut self, configuration: &Configuration) -> Result<(), crate::Error<IE>> {
+        self.upper_mut().configure(configuration)?;
+        self.lower_mut().configure(configuration)
+    }
+
+    pub fn enable(&mut self, enable: bool) -> Result<(), crate::Error<IE>> {
+        self.upper_mut().chip_enable(enable)?;
+        self.lower_mut().chip_enable(enable)
+    }
+}
+
+impl<U, L, VP> Lp586xDisplay1x2<U, L, VP> {
+    pub fn upper_mut(&mut self) -> &mut U {
+        &mut self.upper
+    }
+
+    pub fn lower_mut(&mut self) -> &mut L {
+        &mut self.lower
+    }
 }
 
 impl<U, L, VP> Lp586xDisplay1x2<U, L, VP>
@@ -31,32 +66,22 @@ where
 
     /// Immediately draw a single pixel.
     /// Drawing this way (per pixel) certainly is not too efficient
-    pub fn draw_pixel(&mut self, px: Pixel<impl GrayColor>) -> Result<(), U::Error> {
-        let (point, luma) = (px.0, px.1.luma());
-
-        // defmt::warn!(
-        //     "draw pixel {},{} -> {:x} (to {})",
-        //     point.x,
-        //     point.y,
-        //     luma,
-        //     self.controller_idx_and_offset(point)
-        // );
+    pub fn draw_pixel(
+        &mut self,
+        Pixel(point, color): Pixel<impl GrayColor>,
+    ) -> Result<(), U::Error> {
+        let luma = color.luma();
 
         match self.controller_idx_and_offset(point) {
-            Some((0, offset)) => self.upper.set_pwm(offset, &[luma])?,
-            Some((1, offset)) => {
-                // how to handle this error?
-                self.lower.set_pwm(offset, &[luma]);
-            }
-            _ => (),
-        };
-
-        Ok(())
+            Some((0, offset)) => self.upper.set_pwm(offset, &[luma]),
+            Some((1, offset)) => self.lower.set_pwm(offset, &[luma]),
+            _ => Ok(()),
+        }
     }
 
     /// returns the controller and dot (offset) for a given point
     /// return None is the `Point` is out of bounds
-    pub fn controller_idx_and_offset(&self, point: Point) -> Option<(u16, u16)> {
+    fn controller_idx_and_offset(&self, point: Point) -> Option<(u16, u16)> {
         // defmt::warn!("zelf.bboxdraw {}, point{},{}", defmt::Debug2Format(&self.bounding_box()),point.x,point.y);
 
         let point_fl = Point::new(self.size().width as i32 - point.x, point.y);
@@ -74,17 +99,10 @@ where
         })
     }
 
-    pub fn upper_mut(&mut self) -> &mut U {
-        &mut self.upper
-    }
-
-    pub fn lower_mut(&mut self) -> &mut L {
-        &mut self.lower
-    }
-
     pub fn toggle_sync(&mut self) {
         self.vsync_pin.set_high();
-        defmt::warn!("toggle_sync");
+        self.vsync_pin.set_high();
+        self.vsync_pin.set_high();
         self.vsync_pin.set_low();
     }
 }
@@ -92,8 +110,9 @@ where
 impl<U, L, VP> OriginDimensions for Lp586xDisplay1x2<U, L, VP>
 where
     U: OriginDimensions,
-    // L: OriginDimensions, // Both displays need to be the same size.
 {
+    /// We use the dimension of the upper display only, as we assume both displays are the same
+    /// probably should enforce this in the type of `Lp586xDisplay1x2<U, L, VP>`, making `U` and `L` one
     fn size(&self) -> Size {
         Size {
             width: self.upper.size().width,
@@ -133,11 +152,11 @@ impl<DV: DeviceVariant, I: RegisterAccess<Error = IfErr>, IfErr> DrawTarget
     where
         C: IntoIterator<Item = Pixel<Self::Color>>,
     {
-        let linez = self.num_lines();
+        let _linez = self.num_lines();
         self.set_pwm(0, &[]);
         // let mut buf = [Gray8::BLACK; Self::NUM_DOTS];
 
-        let px = pixels.into_iter().next().unwrap();
+        let _px = pixels.into_iter().next().unwrap();
         // px.
         Ok(())
     }
