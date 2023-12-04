@@ -12,13 +12,13 @@ license = "MIT OR Apache-2.0"
 
 [features]
 eh1_0 = ["dep:eh1_0"]
-embedded_graphics = ["dep:embedded-graphics"]
+embedded_graphics = ["dep:embedded-graphics-core"]
 
 [dependencies]
 embedded-hal = "0.2"
 defmt = "^0.3"
 eh1_0 = { package = "embedded-hal", version = "1.0.0-alpha.10", optional = true }
-embedded-graphics = { version = "0.8.1", optional = true }
+embedded-graphics-core = { version = "0.4", optional = true }
 
 [dev-dependencies]
 embedded-hal-mock = "0.9"
