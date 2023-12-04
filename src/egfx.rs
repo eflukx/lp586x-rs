@@ -2,19 +2,19 @@ use crate::{
     configuration::Configuration, interface::RegisterAccess, DataMode8Bit, DataModeMarker,
     DeviceVariant, Lp586x, PwmAccess,
 };
-pub use embedded_graphics as eg;
-use embedded_graphics::{pixelcolor::Gray8, prelude::*};
+use eg::{pixelcolor::Gray8, prelude::*};
+pub use embedded_graphics_core as eg;
 use embedded_hal::digital::v2::OutputPin;
 
 /// Simple composited display of two LP586x controllers
 /// stacked in height i.e. '1x2'
-pub struct Lp586xDisplay1x2<U, L, VP> {
-    upper: U,
-    lower: L,
+pub struct Lp586xDisplay1x2<D, VP> {
+    upper: D,
+    lower: D,
     vsync_pin: VP,
 }
 
-impl<VP, DV, I, DM, IE> Lp586xDisplay1x2<Lp586x<DV, I, DM>, Lp586x<DV, I, DM>, VP>
+impl<VP, DV, I, DM, IE> Lp586xDisplay1x2<Lp586x<DV, I, DM>, VP>
 where
     I: RegisterAccess<Error = crate::Error<IE>>,
     DV: DeviceVariant,
@@ -36,31 +36,26 @@ where
     }
 }
 
-impl<U, L, VP> Lp586xDisplay1x2<U, L, VP> {
-    pub fn upper_mut(&mut self) -> &mut U {
+impl<D, VP> Lp586xDisplay1x2<D, VP> {
+    pub fn upper_mut(&mut self) -> &mut D {
         &mut self.upper
     }
 
-    pub fn lower_mut(&mut self) -> &mut L {
+    pub fn lower_mut(&mut self) -> &mut D {
         &mut self.lower
     }
 }
 
-impl<U, L, VP> Lp586xDisplay1x2<U, L, VP>
+impl<D, VP> Lp586xDisplay1x2<D, VP>
 where
-    U: PwmAccess<u8> + OriginDimensions,
-    L: PwmAccess<u8> + OriginDimensions,
+    D: PwmAccess<u8> + OriginDimensions,
     VP: OutputPin,
 {
-    pub fn new(upper: U, lower: L, vsync_pin: VP) -> Result<Self, crate::Error<()>> {
-        if upper.size() == lower.size() {
-            Ok(Lp586xDisplay1x2 {
-                upper,
-                lower,
-                vsync_pin,
-            })
-        } else {
-            Err(crate::Error::SizeMismatch)
+    pub fn new(upper: D, lower: D, vsync_pin: VP) -> Self {
+        Lp586xDisplay1x2 {
+            upper,
+            lower,
+            vsync_pin,
         }
     }
 
@@ -69,7 +64,7 @@ where
     pub fn draw_pixel(
         &mut self,
         Pixel(point, color): Pixel<impl GrayColor>,
-    ) -> Result<(), U::Error> {
+    ) -> Result<(), D::Error> {
         let luma = color.luma();
 
         match self.controller_idx_and_offset(point) {
@@ -82,8 +77,6 @@ where
     /// returns the controller and dot (offset) for a given point
     /// return None is the `Point` is out of bounds
     fn controller_idx_and_offset(&self, point: Point) -> Option<(u16, u16)> {
-        // defmt::warn!("zelf.bboxdraw {}, point{},{}", defmt::Debug2Format(&self.bounding_box()),point.x,point.y);
-
         let point_fl = Point::new(self.size().width as i32 - point.x, point.y);
         self.bounding_box().contains(point_fl).then(|| {
             if self.upper.bounding_box().contains(point_fl) {
@@ -100,19 +93,18 @@ where
     }
 
     pub fn toggle_sync(&mut self) {
-        self.vsync_pin.set_high();
-        self.vsync_pin.set_high();
-        self.vsync_pin.set_high();
-        self.vsync_pin.set_low();
+        for _ in 1..5 {
+            // dirty.. but works for now (making high pulse wide enough)..
+            let _ = self.vsync_pin.set_high();
+        }
+        let _ = self.vsync_pin.set_low();
     }
 }
 
-impl<U, L, VP> OriginDimensions for Lp586xDisplay1x2<U, L, VP>
+impl<D, VP> OriginDimensions for Lp586xDisplay1x2<D, VP>
 where
-    U: OriginDimensions,
+    D: OriginDimensions,
 {
-    /// We use the dimension of the upper display only, as we assume both displays are the same
-    /// probably should enforce this in the type of `Lp586xDisplay1x2<U, L, VP>`, making `U` and `L` one
     fn size(&self) -> Size {
         Size {
             width: self.upper.size().width,
@@ -121,14 +113,13 @@ where
     }
 }
 
-impl<U, L, VP> DrawTarget for Lp586xDisplay1x2<U, L, VP>
+impl<D, VP> DrawTarget for Lp586xDisplay1x2<D, VP>
 where
-    U: PwmAccess<u8> + OriginDimensions,
-    L: PwmAccess<u8> + OriginDimensions,
+    D: PwmAccess<u8> + OriginDimensions,
     VP: OutputPin,
 {
     type Color = Gray8;
-    type Error = U::Error; // Hmm how to handle the two "different" errors (which we know are the same type) neatly?
+    type Error = D::Error; // Hmm how to handle the two "different" errors (which we know are the same type) neatly?
 
     fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
     where
@@ -137,30 +128,31 @@ where
         for px in pixels {
             self.draw_pixel(px)?;
         }
-        // self.vsync_pin.set_high();
+
         Ok(())
     }
 }
 
-impl<DV: DeviceVariant, I: RegisterAccess<Error = IfErr>, IfErr> DrawTarget
-    for Lp586x<DV, I, DataMode8Bit>
-{
-    type Color = Gray8;
-    type Error = crate::Error<I::Error>;
+// TODO: this...
+// impl<DV: DeviceVariant, I: RegisterAccess<Error = IfErr>, IfErr> DrawTarget
+//     for Lp586x<DV, I, DataMode8Bit>
+// {
+//     type Color = Gray8;
+//     type Error = crate::Error<I::Error>;
 
-    fn draw_iter<C>(&mut self, pixels: C) -> Result<(), Self::Error>
-    where
-        C: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        let _linez = self.num_lines();
-        self.set_pwm(0, &[]);
-        // let mut buf = [Gray8::BLACK; Self::NUM_DOTS];
+//     fn draw_iter<C>(&mut self, pixels: C) -> Result<(), Self::Error>
+//     where
+//         C: IntoIterator<Item = Pixel<Self::Color>>,
+//     {
+//         let _linez = self.num_lines();
+//         self.set_pwm(0, &[]);
+//         let mut buf = [Gray8::BLACK; Self::NUM_DOTS];
 
-        let _px = pixels.into_iter().next().unwrap();
-        // px.
-        Ok(())
-    }
-}
+//         let _px = pixels.into_iter().next().unwrap();
+//         // px.
+//         Ok(())
+//     }
+// }
 
 impl<DV: DeviceVariant, I, DM> OriginDimensions for Lp586x<DV, I, DM> {
     fn size(&self) -> Size {

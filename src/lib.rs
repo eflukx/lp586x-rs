@@ -12,7 +12,7 @@ pub mod interface;
 mod register;
 
 #[cfg(feature = "embedded_graphics")]
-pub mod gfx;
+pub mod egfx;
 
 use core::marker::PhantomData;
 
@@ -28,10 +28,6 @@ pub enum Error<IE> {
 
     /// Temporary buffer too small
     BufferOverrun,
-
-    /// Size needs to be the same when stacking displays
-    #[cfg(feature = "embedded_graphics")]
-    SizeMismatch,
 }
 
 /// Output PWM frequency setting
@@ -433,7 +429,7 @@ where
     DM: DataModeMarker,
 {
     /// Create a new LP586x driver instance with the given `interface`.
-    /// 
+    ///
     /// The returned driver has the chip enabled
     pub fn new(interface: I) -> Result<Lp586x<DV, I, DataModeUnconfigured>, Error<IE>> {
         let mut driver = Lp586x {
