@@ -1,6 +1,6 @@
 use crate::{
-    configuration::Configuration, interface::RegisterAccess, DataMode8Bit, DataModeMarker,
-    DeviceVariant, Lp586x, PwmAccess,
+    configuration::Configuration, interface::RegisterAccess, DataModeMarker, DeviceVariant, Lp586x,
+    PwmAccess,
 };
 use eg::{pixelcolor::Gray8, prelude::*};
 pub use embedded_graphics_core as eg;
@@ -20,6 +20,13 @@ where
     DV: DeviceVariant,
     DM: DataModeMarker,
 {
+    pub const WIDTH: u32 = DV::NUM_DOTS as u32;
+    pub const HEIGHT: u32 = DV::NUM_LINES as u32 * 2;
+    pub const SIZE: Size = Size {
+        width: Self::WIDTH,
+        height: Self::HEIGHT,
+    };
+
     pub fn set_global_brightness(&mut self, brightness: u8) -> Result<(), crate::Error<IE>> {
         self.upper_mut().set_global_brightness(brightness)?;
         self.lower_mut().set_global_brightness(brightness)
