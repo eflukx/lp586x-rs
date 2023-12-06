@@ -20,7 +20,7 @@ where
     DV: DeviceVariant,
     DM: DataModeMarker,
 {
-    pub const WIDTH: u32 = DV::NUM_DOTS as u32;
+    pub const WIDTH: u32 = DV::NUM_CURRENT_SINKS as u32;
     pub const HEIGHT: u32 = DV::NUM_LINES as u32 * 2;
     pub const SIZE: Size = Size {
         width: Self::WIDTH,
