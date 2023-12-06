@@ -84,16 +84,17 @@ where
     /// returns the controller and dot (offset) for a given point
     /// return None is the `Point` is out of bounds
     fn controller_idx_and_offset(&self, point: Point) -> Option<(u16, u16)> {
-        let point_fl = Point::new(self.size().width as i32 - point.x, point.y);
-        self.bounding_box().contains(point_fl).then(|| {
-            if self.upper.bounding_box().contains(point_fl) {
-                let offset = point_fl.y * self.size().width as i32 + point_fl.x;
+        // H-Flip point
+        let point = Point::new(self.size().width as i32 - point.x - 1, point.y);
+
+        self.bounding_box().contains(point).then(|| {
+            if self.upper.bounding_box().contains(point) {
+                let offset = point.y * self.size().width as i32 + point.x;
                 (0, offset as u16)
             } else {
                 // subtract the height of the upper part to get correct offset for lower controller
-                let offset = (point_fl.y - self.upper.size().height as i32)
-                    * self.size().width as i32
-                    + point_fl.x;
+                let offset = (point.y - self.upper.size().height as i32) * self.size().width as i32
+                    + point.x;
                 (1, offset as u16)
             }
         })
@@ -125,7 +126,7 @@ where
     D: PwmAccess<u8> + OriginDimensions,
     VP: OutputPin,
 {
-    type Color = Gray8;
+    type Color = Gray8; // how to implement this for all types implementing GrayColor?
     type Error = D::Error; // Hmm how to handle the two "different" errors (which we know are the same type) neatly?
 
     fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
@@ -139,27 +140,6 @@ where
         Ok(())
     }
 }
-
-// TODO: this...
-// impl<DV: DeviceVariant, I: RegisterAccess<Error = IfErr>, IfErr> DrawTarget
-//     for Lp586x<DV, I, DataMode8Bit>
-// {
-//     type Color = Gray8;
-//     type Error = crate::Error<I::Error>;
-
-//     fn draw_iter<C>(&mut self, pixels: C) -> Result<(), Self::Error>
-//     where
-//         C: IntoIterator<Item = Pixel<Self::Color>>,
-//     {
-//         let _linez = self.num_lines();
-//         self.set_pwm(0, &[]);
-//         let mut buf = [Gray8::BLACK; Self::NUM_DOTS];
-
-//         let _px = pixels.into_iter().next().unwrap();
-//         // px.
-//         Ok(())
-//     }
-// }
 
 impl<DV: DeviceVariant, I, DM> OriginDimensions for Lp586x<DV, I, DM> {
     fn size(&self) -> Size {
