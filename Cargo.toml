@@ -11,14 +11,17 @@ license = "MIT OR Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
+default = ["embedded_graphics_text"]
 eh1_0 = ["dep:eh1_0"]
 embedded_graphics = ["dep:embedded-graphics-core"]
+embedded_graphics_text = ["embedded_graphics", "dep:embedded-graphics"]
 
 [dependencies]
 embedded-hal = "0.2"
 defmt = "^0.3"
 eh1_0 = { package = "embedded-hal", version = "1.0.0-alpha.10", optional = true }
 embedded-graphics-core = { version = "0.4", optional = true }
+embedded-graphics = { version = "0.8.1", optional = true }
 
 [dev-dependencies]
 embedded-hal-mock = "0.9"

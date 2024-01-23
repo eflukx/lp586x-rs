@@ -13,6 +13,8 @@ mod register;
 
 #[cfg(feature = "embedded_graphics")]
 pub mod egfx;
+#[cfg(feature = "embedded_graphics_text")]
+pub mod eg_text;
 
 use core::marker::PhantomData;
 

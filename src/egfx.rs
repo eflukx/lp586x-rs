@@ -1,8 +1,14 @@
+use core::ops::RangeInclusive;
+
 use crate::{
     configuration::Configuration, interface::RegisterAccess, DataModeMarker, DeviceVariant, Lp586x,
     PwmAccess,
 };
 use eg::{pixelcolor::Gray8, prelude::*};
+use embedded_graphics::{
+    mono_font::{self, MonoFont, MonoTextStyle},
+    text::renderer::TextRenderer,
+};
 pub use embedded_graphics_core as eg;
 use embedded_hal::digital::v2::OutputPin;
 
@@ -14,11 +20,9 @@ pub struct Lp586xDisplay1x2<D, VP> {
     vsync_pin: VP,
 }
 
-impl<VP, DV, I, DM, IE> Lp586xDisplay1x2<Lp586x<DV, I, DM>, VP>
+impl<VP, DV, I, DM> Lp586xDisplay1x2<Lp586x<DV, I, DM>, VP>
 where
-    I: RegisterAccess<Error = crate::Error<IE>>,
     DV: DeviceVariant,
-    DM: DataModeMarker,
 {
     pub const WIDTH: u32 = DV::NUM_CURRENT_SINKS as u32;
     pub const HEIGHT: u32 = DV::NUM_LINES as u32 * 2;
@@ -26,7 +30,14 @@ where
         width: Self::WIDTH,
         height: Self::HEIGHT,
     };
+}
 
+impl<VP, DV, I, DM, IE> Lp586xDisplay1x2<Lp586x<DV, I, DM>, VP>
+where
+    I: RegisterAccess<Error = crate::Error<IE>>,
+    DV: DeviceVariant,
+    DM: DataModeMarker,
+{
     pub fn set_global_brightness(&mut self, brightness: u8) -> Result<(), crate::Error<IE>> {
         self.upper_mut().set_global_brightness(brightness)?;
         self.lower_mut().set_global_brightness(brightness)
@@ -44,6 +55,10 @@ where
 }
 
 impl<D, VP> Lp586xDisplay1x2<D, VP> {
+    pub fn into_parts(self) -> (D, D, VP) {
+        (self.upper, self.lower, self.vsync_pin)
+    }
+
     pub fn upper_mut(&mut self) -> &mut D {
         &mut self.upper
     }
@@ -81,8 +96,8 @@ where
         }
     }
 
-    /// returns the controller and dot (offset) for a given point
-    /// return None is the `Point` is out of bounds
+    /// returns the controller and dot (offset) for a given `Point`
+    /// return `None` is the `Point` is out of bounds
     fn controller_idx_and_offset(&self, point: Point) -> Option<(u16, u16)> {
         // H-Flip point
         let point = Point::new(self.size().width as i32 - point.x - 1, point.y);
@@ -101,7 +116,7 @@ where
     }
 
     pub fn toggle_sync(&mut self) {
-        for _ in 1..5 {
+        for _ in 1..15 {
             // dirty.. but works for now (making high pulse wide enough)..
             let _ = self.vsync_pin.set_high();
         }
