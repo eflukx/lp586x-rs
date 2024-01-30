@@ -11,10 +11,10 @@ pub mod configuration;
 pub mod interface;
 mod register;
 
-#[cfg(feature = "embedded_graphics")]
-pub mod egfx;
 #[cfg(feature = "embedded_graphics_text")]
 pub mod eg_text;
+#[cfg(feature = "embedded_graphics")]
+pub mod egfx;
 
 use core::marker::PhantomData;
 
@@ -444,6 +444,17 @@ where
         driver.chip_enable(true)?;
 
         Ok(driver)
+    }
+
+    /// Infallible version of `new()`. My use case is that an `Lp586x` could be initialized, without
+    /// the IC being connected. (user connector). Initialization needs to be deferred to when the
+    /// connection is made.
+    pub fn new_uninitialized(interface: I) -> Lp586x<DV, I, DataModeUnconfigured> {
+        Lp586x {
+            interface,
+            _data_mode: PhantomData::default(),
+            _variant: PhantomData::default(),
+        }
     }
 
     pub fn new_8bit(interface: I) -> Result<Lp586x<DV, I, DataMode8Bit>, Error<IE>> {

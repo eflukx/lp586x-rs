@@ -14,13 +14,14 @@ use embedded_hal::digital::v2::OutputPin;
 
 /// Simple composited display of two LP586x controllers
 /// stacked in height i.e. '1x2'
-pub struct Lp586xDisplay1x2<D, VP> {
+pub struct Lp586xDisplay1x2<'a, D, VP> {
     upper: D,
     lower: D,
     vsync_pin: VP,
+    configuration: &'a Configuration,
 }
 
-impl<VP, DV, I, DM> Lp586xDisplay1x2<Lp586x<DV, I, DM>, VP>
+impl<VP, DV, I, DM> Lp586xDisplay1x2<'_, Lp586x<DV, I, DM>, VP>
 where
     DV: DeviceVariant,
 {
@@ -32,15 +33,26 @@ where
     };
 }
 
-impl<VP, DV, I, DM, IE> Lp586xDisplay1x2<Lp586x<DV, I, DM>, VP>
+impl<VP, DV, I, DM, IE> Lp586xDisplay1x2<'_, Lp586x<DV, I, DM>, VP>
 where
     I: RegisterAccess<Error = crate::Error<IE>>,
     DV: DeviceVariant,
     DM: DataModeMarker,
 {
-    pub fn set_global_brightness(&mut self, brightness: u8) -> Result<(), crate::Error<IE>> {
-        self.upper_mut().set_global_brightness(brightness)?;
-        self.lower_mut().set_global_brightness(brightness)
+    pub fn reset_and_reconfigure(&mut self) -> Result<(), crate::Error<IE>> {
+        self.reset()?;
+        self.enable(true)?;
+        self.configure(self.configuration)
+    }
+
+    pub fn reset(&mut self) -> Result<(), crate::Error<IE>> {
+        self.upper_mut().reset()?;
+        self.lower_mut().reset()
+    }
+
+    pub fn enable(&mut self, enable: bool) -> Result<(), crate::Error<IE>> {
+        self.upper_mut().chip_enable(enable)?;
+        self.lower_mut().chip_enable(enable)
     }
 
     pub fn configure(&mut self, configuration: &Configuration) -> Result<(), crate::Error<IE>> {
@@ -48,13 +60,13 @@ where
         self.lower_mut().configure(configuration)
     }
 
-    pub fn enable(&mut self, enable: bool) -> Result<(), crate::Error<IE>> {
-        self.upper_mut().chip_enable(enable)?;
-        self.lower_mut().chip_enable(enable)
+    pub fn set_global_brightness(&mut self, brightness: u8) -> Result<(), crate::Error<IE>> {
+        self.upper_mut().set_global_brightness(brightness)?;
+        self.lower_mut().set_global_brightness(brightness)
     }
 }
 
-impl<D, VP> Lp586xDisplay1x2<D, VP> {
+impl<D, VP> Lp586xDisplay1x2<'_, D, VP> {
     pub fn into_parts(self) -> (D, D, VP) {
         (self.upper, self.lower, self.vsync_pin)
     }
@@ -68,16 +80,17 @@ impl<D, VP> Lp586xDisplay1x2<D, VP> {
     }
 }
 
-impl<D, VP> Lp586xDisplay1x2<D, VP>
+impl<'a, D, VP> Lp586xDisplay1x2<'a, D, VP>
 where
     D: PwmAccess<u8> + OriginDimensions,
     VP: OutputPin,
 {
-    pub fn new(upper: D, lower: D, vsync_pin: VP) -> Self {
+    pub fn new(upper: D, lower: D, vsync_pin: VP, configuration: &'a crate::Configuration) -> Self {
         Lp586xDisplay1x2 {
             upper,
             lower,
             vsync_pin,
+            configuration,
         }
     }
 
@@ -124,7 +137,7 @@ where
     }
 }
 
-impl<D, VP> OriginDimensions for Lp586xDisplay1x2<D, VP>
+impl<D, VP> OriginDimensions for Lp586xDisplay1x2<'_, D, VP>
 where
     D: OriginDimensions,
 {
@@ -136,7 +149,7 @@ where
     }
 }
 
-impl<D, VP> DrawTarget for Lp586xDisplay1x2<D, VP>
+impl<D, VP> DrawTarget for Lp586xDisplay1x2<'_, D, VP>
 where
     D: PwmAccess<u8> + OriginDimensions,
     VP: OutputPin,

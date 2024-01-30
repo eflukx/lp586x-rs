@@ -29,20 +29,17 @@ pub trait HScroll {
         position: Point,
     ) -> Result<Option<Self::Output>, Self::Error>;
 
-    fn initial_x_offset(&self) -> i32;
+    fn h_scroll_start_position(&self) -> Point;
 
     // At which position do we start scrollin'?
     fn default_offset(&self) -> Point {
         Point::new(0, Self::DEFAULT_TEXT_FRONT_STYLE.line_height() as i32 - 2)
     }
 
-    fn h_scroll_position_iter(
-        &self,
-        drawable: impl Dimensions,
-    ) -> impl Iterator<Item = Point> + 'static;
+    fn h_scroll_position_iter(&self, drawable: impl Dimensions) -> impl Iterator<Item = Point>;
 }
 
-impl<D, VP> HScroll for Lp586xDisplay1x2<D, VP>
+impl<D, VP> HScroll for Lp586xDisplay1x2<'_, D, VP>
 where
     D: PwmAccess<u8> + OriginDimensions,
     VP: OutputPin,
@@ -65,38 +62,41 @@ where
         text_drawable.draw(self).map(Option::Some)
     }
 
-    fn h_scroll_position_iter(
-        &self,
-        drawable: impl Dimensions,
-    ) -> impl Iterator<Item = Point> + 'static {
+    fn h_scroll_position_iter(&self, drawable: impl Dimensions) -> impl Iterator<Item = Point> {
         let drawable_width = drawable.bounding_box().size.width as i32;
-        (-drawable_width..=self.initial_x_offset())
+        (-drawable_width..=self.h_scroll_start_position().x)
             .rev()
             .map(|x_off| Point::new(x_off, 0))
-            .clone()
     }
 
-    fn initial_x_offset(&self) -> i32 {
-        self.size().width as i32
+    fn h_scroll_start_position(&self) -> Point {
+        Point::new(self.size().width as i32, 0)
     }
 }
 
 pub struct ScrollIter<'a, D> {
     display: PhantomData<D>,
-    position_iter: Box<dyn Iterator<Item = Point>>,
+    position_iter: Box<dyn Iterator<Item = Point> + Send>,
     text_drawable: Text<'a, MonoTextStyle<'a, Gray8>>,
 }
-
 impl<'a, D> ScrollIter<'a, D>
 where
     D: HScroll,
 {
     pub fn new(display: &D, text: &'a str) -> Self {
         let text_drawable = Text::new(text, Point::zero(), D::DEFAULT_TEXT_FRONT_STYLE);
-        let x_iter = display.h_scroll_position_iter(text_drawable);
+
+        // let x_iter = display.h_scroll_position_iter(text_drawable); // This is not `Send` probably due to clusure(?)..
+        let drawable_width = text_drawable.bounding_box().size.width as i32;
+        let x_iter = (-drawable_width..=display.h_scroll_start_position().x)
+            .rev()
+            .map(|x_off| Point::new(x_off, 0)); // Defining Here _is_ `Send` however..
 
         Self {
             display: PhantomData,
+            // position_iter: Box::new(Myderp {
+            //     range: x_iter,
+            // }),
             position_iter: Box::new(x_iter),
             text_drawable,
         }
